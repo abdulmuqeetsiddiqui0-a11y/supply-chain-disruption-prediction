@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chain Watch – Supply Chain Disruption Prediction</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#e8edf1;--panel:#fff;--ink:#14202b;--mute:#5b6b78;--line:#cdd7de;--ok:#1f7a6d;--warn:#d89a00;--bad:#c4352b;--accent:#14202b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Source Sans 3",system-ui,sans-serif}
+h1,h2,.big{font-family:"Barlow Condensed",Impact,sans-serif;font-weight:700;letter-spacing:.01em;margin:0}
+header{background:var(--accent);color:#fff;padding:28px clamp(16px,4vw,48px)}
+header h1{font-size:clamp(34px,6vw,60px);line-height:1}
+header p{max-width:62ch;margin:10px 0 0;color:#c4d0d9}
+main{padding:20px clamp(16px,4vw,48px) 48px;display:grid;gap:20px;max-width:1280px;margin:auto}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.kpi{background:var(--panel);border-left:6px solid var(--line);padding:12px 16px}
+.kpi .big{font-size:42px;line-height:1}
+.kpi span{color:var(--mute);font-size:14px}
+.grid{display:grid;grid-template-columns:3fr 2fr;gap:20px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--panel);padding:18px;overflow-x:auto}
+h2{font-size:26px;margin-bottom:10px}
+table{border-collapse:collapse;width:100%;min-width:520px}
+th{text-align:left;font-weight:600;color:var(--mute);font-size:14px;border-bottom:2px solid var(--ink);padding:6px 8px}
+td{padding:8px;border-bottom:1px solid var(--line)}
+tr.row{cursor:pointer}tr.row:hover,tr.sel{background:#eef3f6}
+tr.row:focus-visible{outline:3px solid var(--ink);outline-offset:-3px}
+.bar{height:10px;background:#e3e9ed;position:relative;min-width:90px}
+.bar i{position:absolute;inset:0 auto 0 0}
+.tag{display:inline-block;padding:1px 8px;font-weight:600;font-size:14px;color:#fff}
+.High{background:var(--bad)}.Medium{background:var(--warn);color:#14202b}.Low{background:var(--ok)}
+.drv{display:grid;grid-template-columns:120px 1fr 36px;gap:8px;align-items:center;font-size:14px;margin:4px 0}
+.act{border-left:4px solid var(--ink);padding:6px 12px;margin:8px 0;background:#f3f6f8}
+.act b{display:block}
+label{display:block;font-size:14px;color:var(--mute);margin-top:12px}
+input[type=range]{width:100%;accent-color:var(--ink)}
+button,.file{font:inherit;font-weight:600;background:var(--ink);color:#fff;border:0;padding:8px 14px;cursor:pointer;display:inline-block}
+button:focus-visible,.file:focus-within{outline:3px solid var(--warn)}
+.file input{display:none}
+small{color:var(--mute)}
+svg text{font:13px "Source Sans 3",sans-serif;fill:var(--ink)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Chain Watch</h1>
+  <p>An AI operations system that reads supplier, inventory, production and delivery data, scores each supplier’s chance of disrupting production in the next 14 days, and tells planners what to do first.</p>
+</header>
+<main>
+  <section class="kpis" id="kpis" aria-live="polite"></section>
+  <div class="grid">
+    <section class="panel">
+      <h2>Supplier risk ranking</h2>
+      <table><thead><tr><th>Supplier</th><th>Part → line</th><th>Cover</th><th>Risk</th><th>Level</th></tr></thead><tbody id="rows"></tbody></table>
+      <small>Select a row to see why it is flagged and what to do.</small>
+    </section>
+    <section class="panel" id="detail"></section>
+  </div>
+  <div class="grid">
+    <section class="panel">
+      <h2>Inventory cover vs. time to replenish</h2>
+      <div id="chart"></div>
+      <small>Bar = days of stock on hand. Dark marker = lead time plus transport delay. Bars that stop short of the marker mean a stock-out before the next delivery.</small>
+    </section>
+    <section class="panel">
+      <h2>What-if scenario</h2>
+      <label>Extra transport delay (days): <b id="v1">0</b><input type="range" id="s1" min="0" max="10" value="0"></label>
+      <label>Demand surge (%): <b id="v2">0</b><input type="range" id="s2" min="0" max="50" value="0"></label>
+      <label>Supplier on-time rate drop (points): <b id="v3">0</b><input type="range" id="s3" min="0" max="20" value="0"></label>
+      <p><small>Sliders re-run the model on every supplier instantly.</small></p>
+      <h2 style="margin-top:18px">Use your own data</h2>
+      <p><small>Upload a CSV with columns: name, part, line, otd, defect, ltTrend, cover, lead, delay, util, single, fin.</small></p>
+      <label class="file" style="color:#fff;margin:0">Upload CSV<input type="file" id="csv" accept=".csv"></label>
+      <button id="reset" type="button">Reset sample data</button>
+    </section>
+  </div>
+  <section class="panel">
+    <h2>How the model works</h2>
+    <p>Each supplier gets eight risk signals scaled from 0 to 1: on-time delivery, defect rate, lead-time trend, inventory gap (lead time plus delay minus days of cover), transport delay, capacity utilisation, single-source dependency and financial health. A weighted logistic model turns them into a probability of disruption. Each signal’s weighted share is shown as the “why”, so planners can check the reasoning. Rules map the biggest drivers to mitigation actions. The weights are expert-set starting values; with real history they can be fitted with logistic regression or gradient boosting.</p>
+  </section>
+</main>
+<script>
+const SAMPLE=[
+{name:"Shenzhen Circuits",part:"Control boards",line:"Line A",otd:78,defect:3.8,ltTrend:7,cover:6,lead:14,delay:4,util:92,single:1,fin:55},
+{name:"Pune Castings",part:"Housings",line:"Line B",otd:93,defect:1.2,ltTrend:1,cover:18,lead:7,delay:0,util:70,single:0,fin:82},
+{name:"Rotterdam Polymers",part:"Seals",line:"Line A",otd:86,defect:2.1,ltTrend:4,cover:10,lead:12,delay:3,util:84,single:0,fin:68},
+{name:"Chennai Fasteners",part:"Fasteners",line:"Line C",otd:96,defect:0.6,ltTrend:0,cover:25,lead:5,delay:0,util:65,single:0,fin:88},
+{name:"Osaka Sensors",part:"Sensors",line:"Line B",otd:84,defect:1.8,ltTrend:5,cover:9,lead:16,delay:2,util:88,single:1,fin:74},
+{name:"Gdansk Steel",part:"Frames",line:"Line C",otd:90,defect:1.5,ltTrend:2,cover:14,lead:10,delay:1,util:78,single:0,fin:60},
+{name:"Monterrey Wiring",part:"Harnesses",line:"Line A",otd:88,defect:2.6,ltTrend:3,cover:12,lead:9,delay:2,util:81,single:0,fin:71},
+{name:"Hyderabad Packaging",part:"Packaging",line:"Line D",otd:95,defect:0.9,ltTrend:0,cover:20,lead:4,delay:0,util:60,single:0,fin:90}];
+const W={otd:2.2,def:1.0,lt:1.4,gap:2.4,tr:1.5,cap:1.0,single:.9,fin:.8},BIAS=-3.4;
+const NAMES={otd:"On-time delivery",def:"Defect rate",lt:"Lead-time trend",gap:"Inventory gap",tr:"Transport delay",cap:"Capacity load",single:"Single source",fin:"Financial health"};
+const ACT={
+gap:["Expedite or air-freight the next order","Stock may run out before the next delivery arrives. Release a partial air shipment and raise safety stock."],
+otd:["Escalate to supplier management","Late deliveries are recurring. Agree a recovery plan with weekly checkpoints."],
+single:["Qualify a backup supplier","Only one source exists. Start a second-source trial and split future orders."],
+tr:["Re-route or change carrier","Transit is slipping. Compare alternate routes and carriers for the next shipment."],
+cap:["Confirm capacity and reserve slots","The supplier is near full utilisation. Reserve production slots and share the forecast early."],
+lt:["Re-baseline planning lead time","Lead times are growing. Update MRP parameters and order earlier."],
+def:["Add incoming quality inspection","Defects are rising. Increase sampling on incoming lots and request a root-cause report."],
+fin:["Run a supplier financial check","Financial health is weak. Consider prepayment limits and shorter order commitments."]};
+const cl=x=>Math.max(0,Math.min(1,x));
+let data=JSON.parse(JSON.stringify(SAMPLE)),sel=0;
+const sc=id=>+document.getElementById(id).value;
+function score(s){
+ const dl=sc("s1"),sg=sc("s2"),od=sc("s3");
+ const cover=s.cover/(1+sg/100),delay=s.delay+dl,otd=s.otd-od,gap=s.lead+delay-cover;
+ const f={otd:cl((95-otd)/25),def:cl(s.defect/6),lt:cl(s.ltTrend/10),gap:cl((gap+5)/15),tr:cl(delay/7),cap:cl((s.util-75)/25),single:s.single?1:0,fin:cl((70-s.fin)/40)};
+ let z=BIAS;const c={};
+ for(const k in W){c[k]=W[k]*f[k];z+=c[k]}
+ const p=1/(1+Math.exp(-z));
+ return{p,c,cover,need:s.lead+delay,level:p>.6?"High":p>.3?"Medium":"Low"};
+}
+const col=l=>({High:"var(--bad)",Medium:"var(--warn)",Low:"var(--ok)"}[l]);
+function render(){
+ const r=data.map((s,i)=>({s,i,m:score(s)})).sort((a,b)=>b.m.p-a.m.p);
+ const high=r.filter(x=>x.m.level=="High").length,lines=new Set(r.filter(x=>x.m.level!="Low").map(x=>x.s.line)).size;
+ const stock=r.filter(x=>x.m.cover<x.m.need).length,avg=r.reduce((a,x)=>a+x.m.p,0)/r.length;
+ document.getElementById("kpis").innerHTML=[["Suppliers tracked",data.length,"var(--line)"],["High risk",high,"var(--bad)"],["Production lines exposed",lines,"var(--warn)"],["Stock-out before delivery",stock,"var(--bad)"],["Average risk",Math.round(avg*100)+"%","var(--ink)"]].map(k=>`<div class="kpi" style="border-color:${k[2]}"><div class="big">${k[1]}</div><span>${k[0]}</span></div>`).join("");
+ if(!r.find(x=>x.i==sel))sel=r[0].i;
+ document.getElementById("rows").innerHTML=r.map(x=>`<tr class="row ${x.i==sel?"sel":""}" tabindex="0" data-i="${x.i}"><td><b>${x.s.name}</b></td><td>${x.s.part} → ${x.s.line}</td><td>${x.m.cover.toFixed(1)} d</td><td><div class="bar"><i style="width:${x.m.p*100}%;background:${col(x.m.level)}"></i></div>${Math.round(x.m.p*100)}%</td><td><span class="tag ${x.m.level}">${x.m.level}</span></td></tr>`).join("");
+ document.querySelectorAll("tr.row").forEach(t=>{const go=()=>{sel=+t.dataset.i;render()};t.onclick=go;t.onkeydown=e=>{if(e.key=="Enter"||e.key==" "){e.preventDefault();go()}}});
+ const d=r.find(x=>x.i==sel),top=Object.entries(d.m.c).sort((a,b)=>b[1]-a[1]),mx=top[0][1]||1;
+ const acts=top.filter(t=>t[1]>.35).slice(0,3).map(t=>ACT[t[0]]);
+ document.getElementById("detail").innerHTML=`<h2>${d.s.name}: ${Math.round(d.m.p*100)}% disruption risk</h2><p>Why it is flagged</p>`+top.slice(0,5).map(t=>`<div class="drv"><span>${NAMES[t[0]]}</span><div class="bar"><i style="width:${t[1]/mx*100}%;background:var(--ink)"></i></div><span>${t[1].toFixed(1)}</span></div>`).join("")+`<p style="margin-top:14px"><b>Recommended actions</b></p>`+(acts.length?acts.map(a=>`<div class="act"><b>${a[0]}</b>${a[1]}</div>`).join(""):`<div class="act"><b>Keep monitoring</b>No signal is strong enough to act on. Review again next week.</div>`);
+ const mxv=Math.max(...r.map(x=>Math.max(x.m.cover,x.m.need)))+3,H=r.length*30+10;
+ document.getElementById("chart").innerHTML=`<svg viewBox="0 0 560 ${H}" width="100%" role="img" aria-label="Days of cover against days to replenish for each supplier">`+r.map((x,k)=>{const y=k*30+6,w=v=>150+v/mxv*400;return`<text x="0" y="${y+14}">${x.s.name.split(" ")[0]}</text><rect x="150" y="${y}" width="${w(x.m.cover)-150}" height="18" fill="${col(x.m.cover<x.m.need?"High":"Low")}"/><rect x="${w(x.m.need)-2}" y="${y-4}" width="4" height="26" fill="#14202b"/>`}).join("")+`</svg>`;
+}
+["s1","s2","s3"].forEach((id,n)=>document.getElementById(id).oninput=e=>{document.getElementById("v"+(n+1)).textContent=e.target.value;render()});
+document.getElementById("reset").onclick=()=>{data=JSON.parse(JSON.stringify(SAMPLE));sel=0;render()};
+document.getElementById("csv").onchange=e=>{
+ const f=e.target.files[0];if(!f)return;
+ f.text().then(t=>{
+  const L=t.trim().split(/\r?\n/),h=L[0].split(",").map(x=>x.trim());
+  const rows=L.slice(1).map(l=>{const v=l.split(",");const o={};h.forEach((k,i)=>{o[k]=isNaN(v[i])||k=="name"||k=="part"||k=="line"?(v[i]||"").trim():+v[i]});return o}).filter(o=>o.name);
+  if(!rows.length||!["otd","cover","lead"].every(k=>k in rows[0])){alert("CSV not read. Include columns: name, part, line, otd, defect, ltTrend, cover, lead, delay, util, single, fin.");return}
+  rows.forEach(o=>{["defect","ltTrend","delay","util","single","fin"].forEach(k=>{if(typeof o[k]!="number")o[k]=k=="util"?75:k=="fin"?70:0})});
+  data=rows;sel=0;render();
+ });
+};
+render();
+</script>
+</body>
+</html>
